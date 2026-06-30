@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -31,7 +32,7 @@ func newHTTPClient(transport http.RoundTripper) *http.Client {
 	}
 }
 
-func ScrapeWebsite(ctx context.Context) (map[string]*CaseResult, error) {
+func ScrapeWebsite(ctx context.Context, filter []string) (map[string]*CaseResult, error) {
 	rateLimitedTransport := &RateLimitedTransport{
 		limiter:   rate.NewLimiter(rate.Every(500*time.Millisecond), 1),
 		transport: newChromeTLSTransport(),
@@ -46,6 +47,8 @@ func ScrapeWebsite(ctx context.Context) (map[string]*CaseResult, error) {
 		return nil, fmt.Errorf("error scraping homepage: %w", err)
 	}
 
+	caseLinks = filterCaseLinks(caseLinks, filter)
+
 	results := make(map[string]*CaseResult, len(caseLinks))
 
 	for index, caseLink := range caseLinks {
@@ -57,15 +60,37 @@ func ScrapeWebsite(ctx context.Context) (map[string]*CaseResult, error) {
 
 		result, err := s.scrapeCase(ctx, caseLink)
 		if err != nil {
-			fmt.Printf("error scraping case %d (%s): %v\n", index, caseLink.Name, err)
+			fmt.Fprintf(os.Stderr, "error scraping case %d (%s): %v\n", index, caseLink.Name, err)
 			continue
 		}
 
-		fmt.Printf("scraped case %d: %s\n", index, caseLink.Name)
+		fmt.Fprintf(os.Stderr, "scraped case %d: %s\n", index, caseLink.Name)
 		results[caseLink.Name] = result
 	}
 
 	return results, nil
+}
+
+// filterCaseLinks keeps only links whose trimmed name matches one of the
+// requested names (case-insensitive). An empty filter keeps everything.
+func filterCaseLinks(links []caseLink, filter []string) []caseLink {
+	if len(filter) == 0 {
+		return links
+	}
+
+	wanted := make(map[string]struct{}, len(filter))
+	for _, name := range filter {
+		wanted[strings.ToLower(strings.TrimSpace(name))] = struct{}{}
+	}
+
+	kept := make([]caseLink, 0, len(filter))
+	for _, link := range links {
+		if _, ok := wanted[strings.ToLower(strings.TrimSpace(link.Name))]; ok {
+			kept = append(kept, link)
+		}
+	}
+
+	return kept
 }
 
 func (s *scraper) scrapeHomepage(ctx context.Context) ([]caseLink, error) {
@@ -407,7 +432,7 @@ func (s *scraper) scrapeCase(ctx context.Context, caseLink caseLink) (*CaseResul
 	for _, skinURL := range skinURLs {
 		skin, err := s.scrapeSkinPage(ctx, skinURL, false)
 		if err != nil {
-			fmt.Printf("error scraping skin %s: %v\n", skinURL, err)
+			fmt.Fprintf(os.Stderr, "error scraping skin %s: %v\n", skinURL, err)
 			continue
 		}
 
@@ -417,7 +442,7 @@ func (s *scraper) scrapeCase(ctx context.Context, caseLink caseLink) (*CaseResul
 	for _, knifeURL := range knifeURLs {
 		skin, err := s.scrapeSkinPage(ctx, knifeURL, true)
 		if err != nil {
-			fmt.Printf("error scraping skin %s: %v\n", knifeURL, err)
+			fmt.Fprintf(os.Stderr, "error scraping skin %s: %v\n", knifeURL, err)
 			continue
 		}
 
