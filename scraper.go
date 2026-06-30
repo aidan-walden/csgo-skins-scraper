@@ -228,13 +228,15 @@ func parseListingURLs(doc *goquery.Document, baseURL *url.URL, isKnives bool) ([
 			}
 			seenSpecial[absoluteURL.String()] = struct{}{}
 			specialURLs = append(specialURLs, absoluteURL.String())
-		case isKnives && isSpecialItemURL(absoluteURL):
+		case isSkinURL(absoluteURL):
+			// Knives/gloves now live under /skin/ too (the old /knife/ and
+			// /glove/ paths are gone), so the same check covers both the case
+			// page and the ?Knives=1 / ?Gloves=1 special-item pages.
 			if _, exists := seenItems[absoluteURL.String()]; exists {
 				return
 			}
 			seenItems[absoluteURL.String()] = struct{}{}
 			itemURLs = append(itemURLs, absoluteURL.String())
-		case !isKnives && isSkinURL(absoluteURL):
 			if _, exists := seenItems[absoluteURL.String()]; exists {
 				return
 			}
@@ -248,6 +250,7 @@ func parseListingURLs(doc *goquery.Document, baseURL *url.URL, isKnives bool) ([
 
 func (s *scraper) getKnivesURLs(ctx context.Context, rawURL string) ([]string, error) {
 	knifeURLs := make([]string, 0)
+	seen := make(map[string]struct{})
 
 	for page := 1; ; page++ {
 		pageURL := rawURL + "&page=" + strconv.Itoa(page)
@@ -273,11 +276,21 @@ func (s *scraper) getKnivesURLs(ctx context.Context, rawURL string) ([]string, e
 		}
 
 		pageSkinURLs, _ := parseListingURLs(doc, resp.Request.URL, true)
-		if len(pageSkinURLs) == 0 {
-			break
+		added := 0
+		for _, knifeURL := range pageSkinURLs {
+			if _, exists := seen[knifeURL]; exists {
+				continue
+			}
+			seen[knifeURL] = struct{}{}
+			knifeURLs = append(knifeURLs, knifeURL)
+			added++
 		}
 
-		knifeURLs = append(knifeURLs, pageSkinURLs...)
+		// Stop on an empty page, or when the site ignores &page and re-serves
+		// the same items (otherwise this loops forever).
+		if added == 0 {
+			break
+		}
 	}
 
 	return knifeURLs, nil
@@ -408,9 +421,13 @@ func (s *scraper) scrapeCase(ctx context.Context, caseLink caseLink) (*CaseResul
 
 	result := NewCaseResult()
 
-	doc.Find("a.market-button-item").EachWithBreak(func(_ int, selection *goquery.Selection) bool {
-		priceText := strings.TrimSpace(selection.Text())
-		price, err := parsePrice(priceText)
+	// Case price now lives in the header stats block as the "Steam price"
+	// market-item (the old a.market-button-item is an image-only Steam link).
+	doc.Find("div.market-item").EachWithBreak(func(_ int, selection *goquery.Selection) bool {
+		if strings.TrimSpace(selection.Find("span.label").First().Text()) != "Steam price" {
+			return true
+		}
+		price, err := parsePrice(selection.Find("span.value").First().Text())
 		if err != nil {
 			return true
 		}
@@ -454,10 +471,6 @@ func (s *scraper) scrapeCase(ctx context.Context, caseLink caseLink) (*CaseResul
 
 func isSkinURL(parsedURL *url.URL) bool {
 	return strings.HasPrefix(parsedURL.Path, "/skin/")
-}
-
-func isSpecialItemURL(parsedURL *url.URL) bool {
-	return strings.HasPrefix(parsedURL.Path, "/knife/") || strings.HasPrefix(parsedURL.Path, "/glove/")
 }
 
 func isCaseSpecialURL(parsedURL *url.URL) bool {
