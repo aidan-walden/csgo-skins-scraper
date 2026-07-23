@@ -22,7 +22,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	marshalled, err := json.MarshalIndent(results, "", "    ")
+	out := struct {
+		Cases map[string]*CaseResult `json:"cases"`
+	}{results}
+
+	marshalled, err := json.MarshalIndent(out, "", "    ")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error marshalling results:", err)
 		os.Exit(1)
